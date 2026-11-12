@@ -104,7 +104,14 @@ button{cursor:pointer}
 
 /* breakdown */
 .cats{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
-.cats li{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center}
+.cats li{display:flex;flex-direction:column}
+.catrow{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;width:100%;border:0;background:transparent;padding:6px 6px;margin:0 -6px;width:calc(100% + 12px);border-radius:10px;text-align:left}
+.catrow:hover{background:var(--bg)}
+.catrow[aria-expanded="true"]{background:var(--accent-soft)}
+.catrow .chev{display:inline-block;color:var(--muted);font-size:12px;width:12px;transition:transform .15s ease}
+.catrow[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.catitems{margin:6px 0 4px 5px;padding-left:12px;border-left:3px solid var(--line);display:flex;flex-direction:column}
+.catitems .cathead{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);padding:2px 0 4px}
 .cats .name{display:flex;align-items:center;gap:8px;font-weight:500}
 .cats .name .dot{width:10px;height:10px;border-radius:3px}
 .cats .amt{font-weight:700;text-align:right}
@@ -269,7 +276,8 @@ details[open] summary::after{content:"–"}
     view: ymOf(todayISO()),
     cat: "food", mode: "UPI",
     editing: null,       // {id, ym}
-    delArmed: false
+    delArmed: false,
+    openCat: null       // category expanded in "Where it went"
   };
   let draftCats = null;
   const STORE_KEY = "daily-expenses-v1";
@@ -365,13 +373,30 @@ details[open] summary::after{content:"–"}
     const by = {};
     items.forEach(i => { const c = catInfo(i); (by[c.id] = by[c.id] || {c, v:0}).v += Number(i.amt)||0; });
     const rows = Object.values(by).sort((a,b) => b.v - a.v);
-    $("catSub").textContent = rows.length ? rows.length + (rows.length===1?" category":" categories") : "";
+    $("catSub").textContent = rows.length ? "Tap one to see its entries" : "";
     if(!rows.length){ $("catList").innerHTML = `<li class="empty">Nothing spent in ${esc(monthName(state.view,{month:"long"}))} yet.</li>`; return; }
     const max = rows[0].v;
-    $("catList").innerHTML = rows.map(r => `<li>
-      <span class="name"><span class="dot" style="background:${esc(r.c.color)}"></span>${esc(r.c.name)}</span>
-      <span class="amt num">${money(r.v)}<small>${Math.round(r.v/t*100)}%</small></span>
-      <div class="bar" aria-hidden="true"><i style="width:${(r.v/max*100).toFixed(1)}%;background:${esc(r.c.color)}"></i></div></li>`).join("");
+    $("catList").innerHTML = rows.map(r => {
+      const open = state.openCat === r.c.id;
+      let list = "";
+      if(open){
+        const its = items.filter(i => catInfo(i).id === r.c.id);
+        list = `<div class="catitems" id="catitems-${esc(r.c.id)}">
+          <div class="cathead"><span>${its.length} ${its.length===1?"entry":"entries"} in ${esc(monthName(state.view,{month:"long"}))}</span><span>Tap one to edit</span></div>
+          ${its.map(i => { const ed = state.editing && state.editing.id === i.id;
+            return `<button type="button" class="entry${ed?" editing":""}" data-id="${esc(i.id)}" data-ym="${esc(ymOf(i.date))}">
+              <span class="dot" style="background:${esc(r.c.color)}"></span>
+              <span class="what"><b>${esc(i.note || dayLabel(i.date))}</b><span>${i.note ? esc(dayLabel(i.date))+" · " : ""}${esc(i.mode||"")}</span></span>
+              <span class="amt num">${money(Number(i.amt)||0)}</span></button>`; }).join("")}
+        </div>`;
+      }
+      return `<li>
+        <button type="button" class="catrow" data-opencat="${esc(r.c.id)}" aria-expanded="${open}" aria-controls="catitems-${esc(r.c.id)}">
+          <span class="name"><span class="chev" aria-hidden="true">›</span><span class="dot" style="background:${esc(r.c.color)}"></span>${esc(r.c.name)}</span>
+          <span class="amt num">${money(r.v)}<small>${Math.round(r.v/t*100)}%</small></span>
+          <span class="bar" aria-hidden="true"><i style="width:${(r.v/max*100).toFixed(1)}%;background:${esc(r.c.color)}"></i></span>
+        </button>${list}</li>`;
+    }).join("");
   }
 
   function renderDaily(){
@@ -489,8 +514,13 @@ details[open] summary::after{content:"–"}
   $("catChips").addEventListener("click", e => { const b = e.target.closest("[data-cat]"); if(!b) return; state.cat = b.dataset.cat; renderChips(); });
   $("modeChips").addEventListener("click", e => { const b = e.target.closest("[data-mode]"); if(!b) return; state.mode = b.dataset.mode; renderChips(); });
 
-  $("log").addEventListener("click", e => {
-    const b = e.target.closest(".entry"); if(!b) return;
+  $("catList").addEventListener("click", e => {
+    const row = e.target.closest("[data-opencat]");
+    if(row){ state.openCat = state.openCat === row.dataset.opencat ? null : row.dataset.opencat; renderCats(); return; }
+    const b = e.target.closest(".entry"); if(b) startEdit(b);
+  });
+  $("log").addEventListener("click", e => { const b = e.target.closest(".entry"); if(b) startEdit(b); });
+  function startEdit(b){
     const ym = b.dataset.ym, item = (state.months[ym] || []).find(i => i.id === b.dataset.id); if(!item) return;
     state.editing = {id:item.id, ym}; state.delArmed = false;
     $("amt").value = String(item.amt); $("note").value = item.note || ""; $("date").value = item.date;
@@ -499,10 +529,10 @@ details[open] summary::after{content:"–"}
     $("formTitle").textContent = "Edit expense"; $("submitBtn").textContent = "Save changes";
     $("delBtn").hidden = false; $("cancelBtn").hidden = false; $("delBtn").textContent = "Delete";
     $("formHint").textContent = dayLabel(item.date);
-    msg(""); renderChips(); renderLog();
+    msg(""); renderChips(); renderLog(); renderCats();
     $("form").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
-  });
-  $("cancelBtn").addEventListener("click", () => { resetForm(); msg(""); renderChips(); renderLog(); });
+  }
+  $("cancelBtn").addEventListener("click", () => { resetForm(); msg(""); renderChips(); renderLog(); renderCats(); });
   $("delBtn").addEventListener("click", () => {
     if(!state.editing) return;
     if(!state.delArmed){ state.delArmed = true; $("delBtn").textContent = "Tap again to delete"; return; }
